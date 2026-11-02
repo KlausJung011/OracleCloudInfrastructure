@@ -1,58 +1,50 @@
-name: Create OCI With Terraform
+name: Test OCI Connection
+
 on:
   workflow_dispatch:
 
-jobs: 
-  OCI-IaC-Deployment:
+permissions:
+  contents: read
+
+jobs:
+  test-oci:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash
-        working-directory: Terraform
+
     steps:
-      - name: 'Checkout'
-        uses: actions/checkout@v2
-      
-      - name: 'Write Config & Key Files'
+      - name: Install OCI CLI
         run: |
-          mkdir ~/.oci
-          echo "[DEFAULT]" >> ~/.oci/config
-          echo "user=${{secrets.OCI_USER_OCID}}" >> ~/.oci/config
-          echo "fingerprint=${{secrets.OCI_FINGERPRINT}}" >> ~/.oci/config
-          echo "region=${{secrets.OCI_REGION}}" >> ~/.oci/config
-          echo "tenancy=${{secrets.OCI_TENANCY_OCID}}" >> ~/.oci/config
-          echo "key_file=~/.oci/key.pem" >> ~/.oci/config
-          echo "${{secrets.OCI_KEY_FILE}}" >> ~/.oci/key.pem
-      
-      - name: 'Install OCI CLI'
-        run: |
-          curl -L -O https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh
-          chmod +x install.sh
-          ./install.sh --accept-all-defaults
-          echo "/home/runner/bin" >> $GITHUB_PATH
-          exec -l $SHELL
-      
-      - name: 'Fix OCI Config File Permissions'
-        run: |
-          oci setup repair-file-permissions --file /home/runner/.oci/config
-          oci setup repair-file-permissions --file /home/runner/.oci/key.pem
+          python3 -m venv "$RUNNER_TEMP/oci-cli"
+          "$RUNNER_TEMP/oci-cli/bin/pip" install oci-cli
+          echo "$RUNNER_TEMP/oci-cli/bin" >> "$GITHUB_PATH"
 
-      - name: Terraform Init
-        id: init
-        run: terraform init
-        
-      - name: Terraform Validate
-        id: validate
-        run: terraform validate
-  
-      - name: Terraform Plan
-        id: plan
-        run: terraform plan
-        continue-on-error: true
-  
-      - name: Terraform Plan Status
-        if: steps.plan.outcome == 'failure'
-        run: exit 1
+      - name: Configure OCI credentials
+        env:
+          OCI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_REGION: ${{ secrets.OCI_REGION }}
+          OCI_PRIVATE_KEY: ${{ secrets.OCI_KEY_FILE }}
+        run: |
+          umask 077
+          mkdir -p "$HOME/.oci"
+          printf '%s\n' "$OCI_PRIVATE_KEY" > "$HOME/.oci/key.pem"
+          {
+            printf '[DEFAULT]\n'
+            printf 'user=%s\n' "$OCI_USER"
+            printf 'tenancy=%s\n' "$OCI_TENANCY"
+            printf 'fingerprint=%s\n' "$OCI_FINGERPRINT"
+            printf 'region=%s\n' "$OCI_REGION"
+            printf 'key_file=%s/.oci/key.pem\n' "$HOME"
+          } > "$HOME/.oci/config"
 
-      - name: Terraform Apply
-        run: terraform apply -auto-approve
+      - name: Test OCI authentication
+        env:
+          OCI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+        run: |
+          oci iam availability-domain list \
+            --compartment-id "$OCI_TENANCY"
+
+      - name: Remove credentials
+        if: always()
+        run: |
+          rm -f "$HOME/.oci/key.pem" "$HOME/.oci/config"
