@@ -1,2 +1,2 @@
-# terraform.tfvars
-compartment_id = "ocid1.tenancy.oc1..aaaaaaaah5sadgcgkfkaub3ghdgt6w5nuonrndkdb2dcupyoh3j7cxvy4goa"
+# Los valores se reciben desde los secretos de GitHub y los inputs del workflow.
+# No guardar credenciales ni URLs preautenticadas en este archivo.

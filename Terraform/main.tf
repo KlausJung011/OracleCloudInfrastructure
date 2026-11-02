@@ -1,109 +1,117 @@
-/*
-# main.tf
 locals {
-  cmpt_name_prefix = "A506"
-  time_f           = formatdate("HHmmss", timestamp())
+  name  = "github-terraform-lab"
+  shape = "VM.Standard.E2.1.Micro"
 }
 
-############################################
-# Compartments
-############################################
-resource "oci_identity_compartment" "example_compartment" {
-  # Required
-  compartment_id = var.compartment_id
-  description    = var.compartment_description
-  name           = "${local.cmpt_name_prefix}-${var.compartment_name}-${local.time_f}"
+data "oci_identity_availability_domains" "available" {
+  compartment_id = var.tenancy_ocid
 }
 
-############################################
-# VCN
-############################################
-
-resource "oci_core_vcn" "example_vcn" {
-  #Required
-  compartment_id = oci_identity_compartment.example_compartment.id
-  cidr_blocks    = var.vcn1.cidr_blocks
-  #Optional
-  display_name = var.vcn1.display_name
+data "oci_core_images" "oracle_linux" {
+  compartment_id           = var.tenancy_ocid
+  operating_system         = "Oracle Linux"
+  operating_system_version = "8"
+  shape                    = local.shape
+  state                    = "AVAILABLE"
+  sort_by                  = "TIMECREATED"
+  sort_order               = "DESC"
 }
 
-############################################
-# Public Subnet
-############################################
-
-resource "oci_core_subnet" "subnetA_pub" {
-  #Required
-  compartment_id = oci_identity_compartment.example_compartment.id
-  vcn_id         = oci_core_vcn.example_vcn.id
-  cidr_block     = var.subnetA_pub.cidr_block
-  #Optional
-  display_name               = var.subnetA_pub.display_name
-  prohibit_public_ip_on_vnic = !var.subnetA_pub.is_public
-  prohibit_internet_ingress  = !var.subnetA_pub.is_public
+resource "oci_identity_compartment" "lab" {
+  compartment_id = var.tenancy_ocid
+  name           = local.name
+  description    = "Laboratorio GitHub Actions y Terraform"
+  enable_delete  = true
 }
 
-############################################
-# Internet Gateways and NAT Gateways
-############################################
-
-resource "oci_core_internet_gateway" "the_internet_gateway" {
-  compartment_id = oci_identity_compartment.example_compartment.id
-  vcn_id         = oci_core_vcn.example_vcn.id
-  display_name   = var.internet_gateway_A.display_name
+resource "oci_core_vcn" "lab" {
+  compartment_id = oci_identity_compartment.lab.id
+  cidr_blocks    = ["10.23.0.0/20"]
+  display_name   = "${local.name}-vcn"
+  dns_label      = "ghlab"
 }
 
+resource "oci_core_internet_gateway" "lab" {
+  compartment_id = oci_identity_compartment.lab.id
+  vcn_id         = oci_core_vcn.lab.id
+  display_name   = "${local.name}-igw"
+  enabled        = true
+}
 
-############################################
-# Route Tables
-############################################
+resource "oci_core_route_table" "public" {
+  compartment_id = oci_identity_compartment.lab.id
+  vcn_id         = oci_core_vcn.lab.id
+  display_name   = "${local.name}-routes"
 
-resource "oci_core_default_route_table" "the_route_table" {
-  #Required
-  compartment_id             = oci_identity_compartment.example_compartment.id
-  manage_default_resource_id = oci_core_vcn.example_vcn.default_route_table_id
-  # Optional
-  display_name = var.subnetA_pub.route_table.display_name
-  dynamic "route_rules" {
-    for_each = [true]
-    content {
-      destination       = var.internet_gateway_A.ig_destination
-      description       = var.subnetA_pub.route_table.description
-      network_entity_id = oci_core_internet_gateway.the_internet_gateway.id
-    }
+  route_rules {
+    destination       = "0.0.0.0/0"
+    destination_type  = "CIDR_BLOCK"
+    network_entity_id = oci_core_internet_gateway.lab.id
   }
 }
 
-# ############################################
-# # Compute Instance
-# ############################################
+resource "oci_core_security_list" "ssh" {
+  compartment_id = oci_identity_compartment.lab.id
+  vcn_id         = oci_core_vcn.lab.id
+  display_name   = "${local.name}-ssh"
 
-resource "oci_core_instance" "ic_pub_vm-A" {
-  compartment_id      = oci_identity_compartment.example_compartment.id
-  shape               = var.ic_pub_vm_A.shape.name
-  availability_domain = var.ic_pub_vm_A.availability_domain
-  display_name        = var.ic_pub_vm_A.display_name
+  ingress_security_rules {
+    protocol    = "6"
+    source      = var.ssh_allowed_cidr
+    source_type = "CIDR_BLOCK"
+    description = "SSH desde el equipo del alumno"
+    tcp_options {
+      min = 22
+      max = 22
+    }
+  }
+
+  egress_security_rules {
+    protocol         = "all"
+    destination      = "0.0.0.0/0"
+    destination_type = "CIDR_BLOCK"
+  }
+}
+
+resource "oci_core_subnet" "public" {
+  compartment_id             = oci_identity_compartment.lab.id
+  vcn_id                     = oci_core_vcn.lab.id
+  cidr_block                 = "10.23.11.0/24"
+  display_name               = "${local.name}-public"
+  dns_label                  = "public"
+  route_table_id             = oci_core_route_table.public.id
+  security_list_ids          = [oci_core_security_list.ssh.id]
+  prohibit_public_ip_on_vnic = false
+}
+
+resource "oci_core_instance" "vm" {
+  compartment_id      = oci_identity_compartment.lab.id
+  availability_domain = data.oci_identity_availability_domains.available.availability_domains[0].name
+  display_name        = "${local.name}-vm"
+  shape               = local.shape
 
   source_details {
-    source_id   = var.ic_pub_vm_A.image_ocid
-    source_type = "image"
-  }
-
-  dynamic "shape_config" {
-    for_each = [true]
-    content {
-      #Optional
-      memory_in_gbs = var.ic_pub_vm_A.shape.memory_in_gbs
-      ocpus         = var.ic_pub_vm_A.shape.ocpus
-    }
+    source_type             = "image"
+    source_id               = try(data.oci_core_images.oracle_linux.images[0].id, null)
+    boot_volume_size_in_gbs = 50
   }
 
   create_vnic_details {
-    subnet_id        = oci_core_subnet.subnetA_pub.id
-    assign_public_ip = var.ic_pub_vm_A.assign_public_ip
+    subnet_id        = oci_core_subnet.public.id
+    assign_public_ip = true
+    hostname_label   = "labvm"
   }
 
   metadata = {
-    ssh_authorized_keys = join("\n", [for k in var.ic_pub_vm_A.ssh_authorized_keys : chomp(k)])
+    ssh_authorized_keys = trimspace(var.ssh_public_key)
+  }
+
+  lifecycle {
+    ignore_changes = [source_details[0].source_id]
+
+    precondition {
+      condition     = length(data.oci_core_images.oracle_linux.images) > 0
+      error_message = "No se encontro una imagen Oracle Linux 8 compatible con VM.Standard.E2.1.Micro en Sao Paulo."
+    }
   }
 }
-*/
