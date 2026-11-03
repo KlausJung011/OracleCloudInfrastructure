@@ -1,8 +1,16 @@
-name: OCI Terraform Plan
+name: OCI Terraform
 
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: 'plan revisa los cambios; apply crea o actualiza los recursos'
+        required: true
+        type: choice
+        default: plan
+        options:
+          - plan
+          - apply
       ssh_cidr:
         description: 'Tu IPv4 publica seguida de /32 (ejemplo: 198.51.100.10/32)'
         required: true
@@ -18,9 +26,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  plan:
+  terraform:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -77,9 +85,23 @@ jobs:
         run: terraform validate -no-color
 
       - name: Terraform Plan
-        run: terraform plan -no-color
+        run: terraform plan -no-color -out=tfplan
+
+      - name: Terraform Apply
+        if: ${{ inputs.operation == 'apply' }}
+        run: terraform apply -no-color tfplan
+
+      - name: Show connection details
+        if: ${{ inputs.operation == 'apply' }}
+        run: |
+          echo "Usuario SSH: opc"
+          printf 'IP publica: '
+          terraform output -raw public_ip
+          printf '\n'
 
       - name: Remove credentials
         if: always()
         working-directory: ${{ runner.temp }}
-        run: rm -f "$HOME/.oci/key.pem" "$HOME/.oci/config"
+        run: |
+          rm -f "$HOME/.oci/key.pem" "$HOME/.oci/config"
+          rm -f "$GITHUB_WORKSPACE/Terraform/tfplan"
