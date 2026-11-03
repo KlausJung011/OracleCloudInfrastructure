@@ -1,6 +1,6 @@
 locals {
   name  = "github-terraform-lab"
-  shape = "VM.Standard.E2.1.Micro"
+  shape = "VM.Standard.E2.1"
 }
 
 data "oci_identity_availability_domains" "available" {
@@ -111,7 +111,7 @@ resource "oci_core_instance" "vm" {
 
     precondition {
       condition     = length(data.oci_core_images.oracle_linux.images) > 0
-      error_message = "No se encontro una imagen Oracle Linux 8 compatible con VM.Standard.E2.1.Micro en Sao Paulo."
+      error_message = "No se encontro una imagen Oracle Linux 8 compatible con ${local.shape} en Sao Paulo."
     }
   }
 }
